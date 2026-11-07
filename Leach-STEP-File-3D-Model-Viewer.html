@@ -1873,8 +1873,17 @@ async function buildSheet(o = capOpts()) {
 }
 function stamp() { const d = new Date(), p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`; }
 function baseName() { return ($('#tbTitle').value || S.file?.name || 'model').replace(/\.[^.]+$/, '').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'model'; }
-function download(cv, name, q) {
-  return new Promise((res) => cv.toBlob((b) => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); res(); }, 'image/jpeg', q));
+// When hosted as a claude.ai artifact, saves go through the viewer's download prompt; otherwise a plain link download.
+const dlCap = window.claude?.use ? window.claude.use('downloads').catch(() => null) : Promise.resolve(null);
+async function download(cv, name, q) {
+  const b = await new Promise((r) => cv.toBlob(r, 'image/jpeg', q));
+  const dl = await dlCap;
+  if (dl) {
+    try { await dl.save({ filename: name, data: b }); return true; }
+    catch (e) { if (e?.code !== 'declined') toast('Could not save the image' + (e?.message ? ': ' + e.message : ''), 4000); return false; }
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  return true;
 }
 let previewTimer = null;
 async function refreshPreview() {
@@ -1897,12 +1906,11 @@ $('#btnCapture').onclick = openCapture;
 $('#capQ').oninput = () => { $('#capQv').textContent = $('#capQ').value; };
 $('#btnSaveJpg').onclick = async () => {
   const [W, H] = capSize(); const cv = await buildCapture(W, H);
-  await download(cv, `${baseName()}_${S.viewName.replace(/\s+/g, '-')}_${stamp()}.jpg`, +$('#capQ').value / 100);
-  toast('JPEG saved to your Downloads folder');
+  if (await download(cv, `${baseName()}_${S.viewName.replace(/\s+/g, '-')}_${stamp()}.jpg`, +$('#capQ').value / 100)) toast('JPEG saved');
 };
 $('#btnSheet').onclick = async () => {
   setLoading(true, 'Rendering 4-view sheet…'); await nextFrame();
-  try { const cv = await buildSheet(); await download(cv, `${baseName()}_4-view_${stamp()}.jpg`, +$('#capQ').value / 100); toast('4-view sheet saved'); }
+  try { const cv = await buildSheet(); if (await download(cv, `${baseName()}_4-view_${stamp()}.jpg`, +$('#capQ').value / 100)) toast('4-view sheet saved'); }
   finally { setLoading(false); }
 };
 $('#btnCopyImg').onclick = async () => {
